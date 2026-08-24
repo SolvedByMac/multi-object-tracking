@@ -29,3 +29,7 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# Temporary evaluation harness artifacts
+results/self_eval/
+results/self_eval_gt/
