@@ -1,35 +1,37 @@
-# Data — never commit
+
 data/
 *.zip
 
-# Caches — regenerable, large
+results/
+
+
 cache/
 *.npy
 *.npz
 *.pkl
 
-# Model weights
+
 *.pt
 *.pth
 *.pth.tar
 
-# Outputs
+
 outputs/
 *.mp4
 *.avi
 
-# Python
+
 __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
 .ruff_cache/
 
-# Editor / OS
+
 .vscode/
 .idea/
 .DS_Store
 
-# Temporary evaluation harness artifacts
+
 results/self_eval/
 results/self_eval_gt/
