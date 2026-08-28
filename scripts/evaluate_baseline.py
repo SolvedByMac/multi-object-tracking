@@ -35,7 +35,7 @@ def main() -> None:
             "SPLIT_TO_EVAL": "train",
             "SKIP_SPLIT_FOL": True,
             "DO_PREPROC": False,
-            "SEQMAP_FILE": "results/seqmaps/MOT17-val.txt",
+            "SEQMAP_FILE": "configs/evaluation/MOT17-val.txt",
         }
     )
 
