@@ -128,6 +128,43 @@ class KalmanFilter:
 
         return projected_mean, projected_covariance
 
+    def gating_distance(
+        self,
+        mean: np.ndarray,
+        covariance: np.ndarray,
+        measurements: np.ndarray,
+    ) -> np.ndarray:
+
+        measurements = np.asarray(
+            measurements,
+            dtype=float,
+        )
+
+        if measurements.ndim != 2 or measurements.shape[1] != 4:
+            raise ValueError("measurements must have shape (N, 4)")
+
+        if len(measurements) == 0:
+            return np.empty(0, dtype=float)
+
+        projected_mean, projected_covariance = self.project(
+            mean,
+            covariance,
+        )
+
+        innovations = measurements - projected_mean
+
+        solved = np.linalg.solve(
+            projected_covariance,
+            innovations.T,
+        ).T
+
+        distances = np.sum(
+            innovations * solved,
+            axis=1,
+        )
+
+        return distances
+
     def update(
         self,
         mean: np.ndarray,

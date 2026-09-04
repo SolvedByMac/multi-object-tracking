@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+CHI2_95_4DOF = 9.4877
+
 
 def iou(box_a: np.ndarray, box_b: np.ndarray) -> float:
 

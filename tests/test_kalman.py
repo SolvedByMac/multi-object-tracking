@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from src.tracking.kalman import KalmanFilter
 
@@ -79,3 +80,104 @@ def test_kalman_filter_reduces_position_rmse():
     print(f"Filtered RMSE: {filtered_rmse:.3f}")
 
     assert filtered_rmse < raw_rmse
+
+
+def test_gating_distance_is_zero_at_prediction():
+    kf = KalmanFilter()
+
+    measurement = np.array(
+        [100.0, 200.0, 50.0, 120.0],
+        dtype=float,
+    )
+
+    mean, covariance = kf.initiate(measurement)
+
+    projected_mean, _ = kf.project(
+        mean,
+        covariance,
+    )
+
+    distances = kf.gating_distance(
+        mean,
+        covariance,
+        projected_mean.reshape(1, 4),
+    )
+
+    assert distances.shape == (1,)
+    assert np.isclose(distances[0], 0.0)
+
+
+def test_gating_distance_increases_for_far_measurement():
+    kf = KalmanFilter()
+
+    measurement = np.array(
+        [100.0, 200.0, 50.0, 120.0],
+        dtype=float,
+    )
+
+    mean, covariance = kf.initiate(measurement)
+
+    candidates = np.array(
+        [
+            [101.0, 201.0, 50.0, 120.0],
+            [300.0, 400.0, 50.0, 120.0],
+        ],
+        dtype=float,
+    )
+
+    distances = kf.gating_distance(
+        mean,
+        covariance,
+        candidates,
+    )
+
+    assert distances[0] < distances[1]
+
+
+def test_gating_distance_empty_measurements():
+    kf = KalmanFilter()
+
+    measurement = np.array(
+        [100.0, 200.0, 50.0, 120.0],
+        dtype=float,
+    )
+
+    mean, covariance = kf.initiate(measurement)
+
+    distances = kf.gating_distance(
+        mean,
+        covariance,
+        np.empty((0, 4)),
+    )
+
+    assert distances.shape == (0,)
+
+
+def test_gating_distance_rejects_invalid_shape():
+    kf = KalmanFilter()
+
+    measurement = np.array(
+        [100.0, 200.0, 50.0, 120.0],
+        dtype=float,
+    )
+
+    mean, covariance = kf.initiate(measurement)
+
+    with pytest.raises(
+        ValueError,
+        match="measurements must have shape",
+    ):
+        kf.gating_distance(
+            mean,
+            covariance,
+            np.zeros((2, 3)),
+        )
+
+
+def test_mahalanobis_gate_threshold():
+    from src.tracking.association import CHI2_95_4DOF
+
+    assert np.isclose(
+        CHI2_95_4DOF,
+        9.4877,
+    )
