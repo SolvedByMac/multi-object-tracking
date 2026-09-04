@@ -373,3 +373,76 @@ def test_mahalanobis_gate_rejects_far_detection():
     assert matches == []
     assert unmatched_tracks == [0]
     assert unmatched_detections == [0]
+
+
+def test_appearance_gate_rejects_dissimilar_embedding():
+    kf = KalmanFilter()
+
+    measurement = np.array(
+        [
+            50.0,
+            100.0,
+            20.0,
+            40.0,
+        ],
+        dtype=float,
+    )
+
+    mean, covariance = kf.initiate(measurement)
+
+    track_boxes = np.array(
+        [
+            [
+                40.0,
+                80.0,
+                60.0,
+                120.0,
+            ]
+        ],
+        dtype=float,
+    )
+
+    detection_boxes = np.array(
+        [
+            [
+                40.0,
+                80.0,
+                60.0,
+                120.0,
+            ]
+        ],
+        dtype=float,
+    )
+
+    track_embeddings = np.array(
+        [
+            [1.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    detection_embeddings = np.array(
+        [
+            [0.0, 1.0],
+        ],
+        dtype=float,
+    )
+
+    (
+        matches,
+        unmatched_tracks,
+        unmatched_detections,
+    ) = associate_fused(
+        track_boxes=track_boxes,
+        track_means=np.array([mean]),
+        track_covariances=np.array([covariance]),
+        track_embeddings=track_embeddings,
+        detection_boxes=detection_boxes,
+        detection_embeddings=detection_embeddings,
+        kf=kf,
+        max_cosine_distance=0.4415,
+    )
+
+    assert matches == []
+    assert unmatched_tracks == [0]
+    assert unmatched_detections == [0]

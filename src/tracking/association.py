@@ -6,6 +6,7 @@ from scipy.optimize import linear_sum_assignment
 from src.tracking.kalman import KalmanFilter
 
 CHI2_95_4DOF = 9.4877
+DEFAULT_MAX_COSINE_DISTANCE = 0.4415
 GATED_COST = 1e6
 
 
@@ -60,11 +61,7 @@ def cosine_cost_matrix(
     track_embeddings: np.ndarray,
     detection_embeddings: np.ndarray,
 ) -> np.ndarray:
-    """
-    Compute pairwise cosine distances.
 
-    Inputs are expected to contain L2-normalized embeddings.
-    """
     track_embeddings = np.asarray(
         track_embeddings,
         dtype=float,
@@ -215,6 +212,7 @@ def associate_fused(
     kf: KalmanFilter,
     lambda_motion: float = 0.98,
     gating_threshold: float = CHI2_95_4DOF,
+    max_cosine_distance: float = DEFAULT_MAX_COSINE_DISTANCE,
 ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
 
     num_tracks = len(track_boxes)
@@ -238,6 +236,11 @@ def associate_fused(
     if len(detection_embeddings) != num_detections:
         raise ValueError("detection_embeddings must align with detection_boxes")
 
+    appearance_cost = cosine_cost_matrix(
+        track_embeddings,
+        detection_embeddings,
+    )
+
     cost_matrix = fused_cost_matrix(
         track_boxes=track_boxes,
         detection_boxes=detection_boxes,
@@ -245,6 +248,10 @@ def associate_fused(
         detection_embeddings=detection_embeddings,
         lambda_motion=lambda_motion,
     )
+
+    appearance_gated = appearance_cost > max_cosine_distance
+
+    cost_matrix[appearance_gated] = GATED_COST
 
     measurements = xyxy_to_cxcywh_array(detection_boxes)
 

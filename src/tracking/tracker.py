@@ -20,6 +20,7 @@ class TrackerConfig:
     n_init: int = 3
     max_age: int = 30
     lambda_motion: float = 0.98
+    max_cosine_distance: float = 0.4415
 
 
 class Tracker:
@@ -117,6 +118,7 @@ class Tracker:
                 detection_embeddings=embeddings,
                 kf=self.kf,
                 lambda_motion=self.config.lambda_motion,
+                max_cosine_distance=(self.config.max_cosine_distance),
             )
 
         else:
