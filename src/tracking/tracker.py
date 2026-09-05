@@ -39,8 +39,12 @@ class Tracker:
         detections: list[Detection],
         embeddings: np.ndarray | None = None,
         frame_idx: int | None = None,
+        low_confidence_detections: list[Detection] | None = None,
     ) -> list[Track]:
         del frame_idx
+
+        if low_confidence_detections is None:
+            low_confidence_detections = []
 
         if embeddings is not None and len(embeddings) != len(detections):
             raise ValueError("embeddings must align with detections")
@@ -86,8 +90,48 @@ class Tracker:
                     embeddings[detection_idx],
                 )
 
+        low_confidence_matches: list[tuple[int, int]] = []
+
+        recovery_track_indices = [
+            track_idx
+            for track_idx in unmatched_track_indices
+            if (
+                self.tracks[track_idx].is_confirmed()
+                and self.tracks[track_idx].time_since_update == 1
+            )
+        ]
+
+        if recovery_track_indices and low_confidence_detections:
+            recovery_track_boxes = self._track_boxes()[recovery_track_indices]
+
+            low_confidence_boxes = self._detection_boxes(low_confidence_detections)
+
+            recovery_matches, _, _ = associate_iou(
+                recovery_track_boxes,
+                low_confidence_boxes,
+                min_iou=self.config.min_iou,
+            )
+
+            for local_track_idx, low_detection_idx in recovery_matches:
+                track_idx = recovery_track_indices[local_track_idx]
+
+                self.tracks[track_idx].update(
+                    low_confidence_detections[low_detection_idx],
+                    self.kf,
+                )
+
+                low_confidence_matches.append(
+                    (
+                        track_idx,
+                        low_detection_idx,
+                    )
+                )
+
+        recovered_track_indices = {track_idx for track_idx, _ in low_confidence_matches}
+
         for track_idx in unmatched_track_indices:
-            self.tracks[track_idx].mark_missed()
+            if track_idx not in recovered_track_indices:
+                self.tracks[track_idx].mark_missed()
 
         for detection_idx in unmatched_detection_indices:
             embedding = embeddings[detection_idx] if embeddings is not None else None
@@ -152,7 +196,6 @@ class Tracker:
                 continue
 
             confirmed_indices.append(track_idx)
-
             confirmed_embeddings.append(embedding)
 
         matches: list[tuple[int, int]] = []
@@ -197,7 +240,7 @@ class Tracker:
                 kf=self.kf,
                 max_age=self.config.max_age,
                 lambda_motion=self.config.lambda_motion,
-                max_cosine_distance=(self.config.max_cosine_distance),
+                max_cosine_distance=self.config.max_cosine_distance,
             )
 
             for local_track_idx, detection_idx in appearance_matches:
@@ -211,7 +254,6 @@ class Tracker:
                 )
 
                 matched_tracks.add(track_idx)
-
                 matched_detections.add(detection_idx)
 
         fallback_track_indices = [
@@ -244,10 +286,7 @@ class Tracker:
                 min_iou=self.config.min_iou,
             )
 
-            for (
-                local_track_idx,
-                local_detection_idx,
-            ) in fallback_matches:
+            for local_track_idx, local_detection_idx in fallback_matches:
                 track_idx = fallback_track_indices[local_track_idx]
 
                 detection_idx = remaining_detection_indices[local_detection_idx]
@@ -260,7 +299,6 @@ class Tracker:
                 )
 
                 matched_tracks.add(track_idx)
-
                 matched_detections.add(detection_idx)
 
         unmatched_track_indices = [

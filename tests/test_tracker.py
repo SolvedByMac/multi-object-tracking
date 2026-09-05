@@ -422,3 +422,69 @@ def test_matching_cascade_prioritizes_recent_track():
 
     assert len(third) == 1
     assert third[0].track_id == 2
+
+
+def test_low_confidence_detection_recovers_confirmed_track():
+    tracker = Tracker(
+        TrackerConfig(
+            min_iou=0.3,
+            n_init=1,
+            max_age=30,
+        )
+    )
+
+    first = tracker.update(
+        [
+            make_detection(
+                100,
+                50,
+                140,
+                150,
+            )
+        ]
+    )
+
+    assert len(first) == 1
+    assert first[0].track_id == 1
+
+    recovered = tracker.update(
+        [],
+        low_confidence_detections=[
+            make_detection(
+                102,
+                51,
+                142,
+                151,
+                confidence=0.2,
+            )
+        ],
+    )
+
+    assert len(recovered) == 1
+    assert recovered[0].track_id == 1
+
+
+def test_low_confidence_detection_does_not_start_track():
+    tracker = Tracker(
+        TrackerConfig(
+            min_iou=0.3,
+            n_init=1,
+            max_age=30,
+        )
+    )
+
+    tracks = tracker.update(
+        [],
+        low_confidence_detections=[
+            make_detection(
+                100,
+                50,
+                140,
+                150,
+                confidence=0.2,
+            )
+        ],
+    )
+
+    assert tracks == []
+    assert tracker.tracks == []
