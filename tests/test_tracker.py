@@ -16,12 +16,7 @@ def make_detection(
 ) -> Detection:
     return Detection(
         xyxy=np.array(
-            [
-                x1,
-                y1,
-                x2,
-                y2,
-            ],
+            [x1, y1, x2, y2],
             dtype=float,
         ),
         confidence=confidence,
@@ -53,28 +48,32 @@ def test_tracker_creates_and_confirms_track():
         )
     )
 
-    detection_1 = make_detection(
-        100,
-        50,
-        140,
-        150,
+    first = tracker.update(
+        [
+            make_detection(
+                100,
+                50,
+                140,
+                150,
+            )
+        ]
     )
 
-    confirmed = tracker.update([detection_1])
+    assert first == []
 
-    assert confirmed == []
-
-    detection_2 = make_detection(
-        102,
-        51,
-        142,
-        151,
+    second = tracker.update(
+        [
+            make_detection(
+                102,
+                51,
+                142,
+                151,
+            )
+        ]
     )
 
-    confirmed = tracker.update([detection_2])
-
-    assert len(confirmed) == 1
-    assert confirmed[0].track_id == 1
+    assert len(second) == 1
+    assert second[0].track_id == 1
 
 
 def test_tracker_keeps_same_id_across_frames():
@@ -110,17 +109,13 @@ def test_tracker_keeps_same_id_across_frames():
     ids = []
 
     for detection in detections:
-        confirmed = tracker.update([detection])
+        tracks = tracker.update([detection])
 
-        assert len(confirmed) == 1
+        assert len(tracks) == 1
 
-        ids.append(confirmed[0].track_id)
+        ids.append(tracks[0].track_id)
 
-    assert ids == [
-        1,
-        1,
-        1,
-    ]
+    assert ids == [1, 1, 1]
 
 
 def test_tracker_spawns_new_identity_for_distant_detection():
@@ -205,8 +200,6 @@ def test_tracker_uses_appearance_embeddings():
             min_iou=0.3,
             n_init=1,
             max_age=30,
-            lambda_motion=0.98,
-            max_cosine_distance=0.4415,
         )
     )
 
@@ -246,6 +239,106 @@ def test_tracker_uses_appearance_embeddings():
     assert second[0].track_id == 1
 
 
+def test_tentative_track_uses_iou_fallback():
+    tracker = Tracker(
+        TrackerConfig(
+            min_iou=0.3,
+            n_init=2,
+            max_age=30,
+            max_cosine_distance=0.4415,
+        )
+    )
+
+    first_embedding = make_embedding(
+        1.0,
+        0.0,
+    )
+
+    second_embedding = make_embedding(
+        0.0,
+        1.0,
+    )
+
+    first = tracker.update(
+        [
+            make_detection(
+                100,
+                50,
+                140,
+                150,
+            )
+        ],
+        embeddings=np.array([first_embedding]),
+    )
+
+    assert first == []
+
+    second = tracker.update(
+        [
+            make_detection(
+                102,
+                51,
+                142,
+                151,
+            )
+        ],
+        embeddings=np.array([second_embedding]),
+    )
+
+    assert len(second) == 1
+    assert second[0].track_id == 1
+
+
+def test_recent_confirmed_track_uses_iou_fallback():
+    tracker = Tracker(
+        TrackerConfig(
+            min_iou=0.3,
+            n_init=1,
+            max_age=30,
+            max_cosine_distance=0.4415,
+        )
+    )
+
+    first_embedding = make_embedding(
+        1.0,
+        0.0,
+    )
+
+    second_embedding = make_embedding(
+        0.0,
+        1.0,
+    )
+
+    first = tracker.update(
+        [
+            make_detection(
+                100,
+                50,
+                140,
+                150,
+            )
+        ],
+        embeddings=np.array([first_embedding]),
+    )
+
+    assert first[0].track_id == 1
+
+    second = tracker.update(
+        [
+            make_detection(
+                102,
+                51,
+                142,
+                151,
+            )
+        ],
+        embeddings=np.array([second_embedding]),
+    )
+
+    assert len(second) == 1
+    assert second[0].track_id == 1
+
+
 def test_matching_cascade_prioritizes_recent_track():
     tracker = Tracker(
         TrackerConfig(
@@ -257,13 +350,11 @@ def test_matching_cascade_prioritizes_recent_track():
         )
     )
 
-    shared_embedding = make_embedding(
+    embedding = make_embedding(
         1.0,
         0.0,
     )
 
-    # Frame 1:
-    # create track 1.
     first = tracker.update(
         [
             make_detection(
@@ -273,14 +364,11 @@ def test_matching_cascade_prioritizes_recent_track():
                 150,
             )
         ],
-        embeddings=np.array([shared_embedding]),
+        embeddings=np.array([embedding]),
     )
 
     assert first[0].track_id == 1
 
-    # Frame 2:
-    # track 1 is missed. A distant
-    # detection creates track 2.
     second = tracker.update(
         [
             make_detection(
@@ -290,20 +378,11 @@ def test_matching_cascade_prioritizes_recent_track():
                 150,
             )
         ],
-        embeddings=np.array([shared_embedding]),
+        embeddings=np.array([embedding]),
     )
 
     assert second[0].track_id == 2
 
-    # At this point:
-    #
-    # track 1 is stale.
-    # track 2 was seen more recently.
-    #
-    # Move their Kalman states so both
-    # are plausible candidates for the
-    # same next detection. The cascade
-    # should give track 2 first chance.
     track_1 = next(track for track in tracker.tracks if track.track_id == 1)
 
     track_2 = next(track for track in tracker.tracks if track.track_id == 2)
@@ -338,11 +417,8 @@ def test_matching_cascade_prioritizes_recent_track():
                 150,
             )
         ],
-        embeddings=np.array([shared_embedding]),
+        embeddings=np.array([embedding]),
     )
 
     assert len(third) == 1
-
-    # Track 2 was more recent, so it
-    # must receive the detection.
     assert third[0].track_id == 2
