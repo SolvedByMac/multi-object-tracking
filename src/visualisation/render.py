@@ -6,6 +6,7 @@ import cv2
 
 from src.detection.cache import load_detection_cache
 from src.detection.detector import Detection
+from src.reid.cache import load_embedding_cache
 from src.tracking.tracker import Tracker, TrackerConfig
 
 
@@ -15,6 +16,8 @@ def render_sequence(
     output_path: str | Path,
     start_frame: int = 1,
     end_frame: int | None = None,
+    embedding_cache_path: str | Path | None = None,
+    tracker_config: TrackerConfig | None = None,
 ) -> None:
     sequence_dir = Path(sequence_dir)
     cache_path = Path(cache_path)
@@ -22,14 +25,16 @@ def render_sequence(
 
     cache = load_detection_cache(cache_path)
 
+    embedding_cache = None
+    if embedding_cache_path is not None:
+        embedding_cache = load_embedding_cache(embedding_cache_path)
+
     first_image = cv2.imread(str(sequence_dir / "img1" / f"{start_frame:06d}.jpg"))
 
     if first_image is None:
         raise FileNotFoundError(sequence_dir / "img1" / f"{start_frame:06d}.jpg")
 
     height, width = first_image.shape[:2]
-
-    # MOT17-02 is 30 FPS.
     fps = 30.0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +50,8 @@ def render_sequence(
         raise RuntimeError(f"Could not open video writer: {output_path}")
 
     tracker = Tracker(
-        TrackerConfig(
+        tracker_config
+        or TrackerConfig(
             min_iou=0.3,
             n_init=3,
             max_age=30,
@@ -65,7 +71,6 @@ def render_sequence(
                 raise FileNotFoundError(image_path)
 
             cached = cache.get(frame_idx)
-
             detections: list[Detection] = []
 
             if cached is not None:
@@ -77,8 +82,13 @@ def render_sequence(
                         )
                     )
 
+            embeddings = None
+            if embedding_cache is not None:
+                embeddings = embedding_cache.get(frame_idx)
+
             tracks = tracker.update(
                 detections=detections,
+                embeddings=embeddings,
                 frame_idx=frame_idx,
             )
 
