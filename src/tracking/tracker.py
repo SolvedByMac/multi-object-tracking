@@ -7,7 +7,7 @@ import numpy as np
 from src.detection.detector import Detection
 from src.reid.gallery import AppearanceGallery
 from src.tracking.association import (
-    associate_fused,
+    associate_fused_cascade,
     associate_iou,
 )
 from src.tracking.kalman import KalmanFilter
@@ -105,19 +105,26 @@ class Tracker:
                 dtype=float,
             )
 
+            track_time_since_update = np.asarray(
+                [track.time_since_update for track in self.tracks],
+                dtype=int,
+            )
+
             (
                 matches,
                 unmatched_track_indices,
                 unmatched_detection_indices,
-            ) = associate_fused(
+            ) = associate_fused_cascade(
                 track_boxes=track_boxes,
                 track_means=track_means,
-                track_covariances=track_covariances,
-                track_embeddings=track_embeddings_array,
-                detection_boxes=detection_boxes,
-                detection_embeddings=embeddings,
+                track_covariances=(track_covariances),
+                track_embeddings=(track_embeddings_array),
+                track_time_since_update=(track_time_since_update),
+                detection_boxes=(detection_boxes),
+                detection_embeddings=(embeddings),
                 kf=self.kf,
-                lambda_motion=self.config.lambda_motion,
+                max_age=(self.config.max_age),
+                lambda_motion=(self.config.lambda_motion),
                 max_cosine_distance=(self.config.max_cosine_distance),
             )
 
@@ -129,10 +136,13 @@ class Tracker:
             ) = associate_iou(
                 track_boxes,
                 detection_boxes,
-                min_iou=self.config.min_iou,
+                min_iou=(self.config.min_iou),
             )
 
-        for track_idx, detection_idx in matches:
+        for (
+            track_idx,
+            detection_idx,
+        ) in matches:
             self.tracks[track_idx].update(
                 detections[detection_idx],
                 self.kf,
