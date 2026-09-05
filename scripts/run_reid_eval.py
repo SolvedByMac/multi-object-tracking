@@ -53,8 +53,8 @@ def run_sequence(
             min_iou=0.3,
             n_init=3,
             max_age=30,
-            lambda_motion=0.98,
-            max_cosine_distance=0.4415,
+            lambda_motion=0.50,
+            max_cosine_distance=0.30,
         )
     )
 

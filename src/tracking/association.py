@@ -6,7 +6,7 @@ from scipy.optimize import linear_sum_assignment
 from src.tracking.kalman import KalmanFilter
 
 CHI2_95_4DOF = 9.4877
-DEFAULT_MAX_COSINE_DISTANCE = 0.4415
+DEFAULT_MAX_COSINE_DISTANCE = 0.30
 GATED_COST = 1e6
 
 

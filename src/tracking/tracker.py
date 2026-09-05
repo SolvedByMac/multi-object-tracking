@@ -19,8 +19,8 @@ class TrackerConfig:
     min_iou: float = 0.3
     n_init: int = 3
     max_age: int = 30
-    lambda_motion: float = 0.98
-    max_cosine_distance: float = 0.4415
+    lambda_motion: float = 0.50
+    max_cosine_distance: float = 0.30
 
 
 class Tracker:
