@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import csv
-import subprocess
-import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -27,26 +25,66 @@ SEQUENCES = [
     "MOT17-13-FRCNN",
 ]
 
-LAMBDA_VALUES = [
-    0.98,
-    0.90,
-    0.75,
-    0.50,
+
+@dataclass(frozen=True)
+class AblationConfig:
+    name: str
+    use_mahalanobis: bool
+    use_appearance: bool
+    use_low_confidence_recovery: bool
+    high_confidence: float
+    low_confidence: float | None
+
+
+CONFIGS = [
+    AblationConfig(
+        name="iou_only",
+        use_mahalanobis=False,
+        use_appearance=False,
+        use_low_confidence_recovery=False,
+        high_confidence=0.10,
+        low_confidence=None,
+    ),
+    AblationConfig(
+        name="mahalanobis",
+        use_mahalanobis=True,
+        use_appearance=False,
+        use_low_confidence_recovery=False,
+        high_confidence=0.10,
+        low_confidence=None,
+    ),
+    AblationConfig(
+        name="appearance",
+        use_mahalanobis=True,
+        use_appearance=True,
+        use_low_confidence_recovery=False,
+        high_confidence=0.10,
+        low_confidence=None,
+    ),
+    AblationConfig(
+        name="final",
+        use_mahalanobis=True,
+        use_appearance=True,
+        use_low_confidence_recovery=True,
+        high_confidence=0.50,
+        low_confidence=0.10,
+    ),
 ]
 
-COSINE_THRESHOLDS = [
-    0.30,
-    0.35,
-    0.40,
-    0.4415,
-]
+
+def make_detections(rows: np.ndarray) -> list[Detection]:
+    return [
+        Detection(
+            xyxy=row[:4].astype(float),
+            confidence=float(row[4]),
+        )
+        for row in rows
+    ]
 
 
 def run_sequence(
     sequence_name: str,
-    tracker_name: str,
-    lambda_motion: float,
-    max_cosine_distance: float,
+    config: AblationConfig,
     data_root: Path,
     detection_cache_root: Path,
     embedding_cache_root: Path,
@@ -64,17 +102,23 @@ def run_sequence(
         detection_cache_root / f"{sequence_name}.npz"
     )
 
-    embedding_cache = load_embedding_cache(
-        embedding_cache_root / f"{sequence_name}.npz"
-    )
+    embedding_cache = None
+
+    if config.use_appearance:
+        embedding_cache = load_embedding_cache(
+            embedding_cache_root / f"{sequence_name}.npz"
+        )
 
     tracker = Tracker(
         TrackerConfig(
             min_iou=0.3,
             n_init=3,
             max_age=30,
-            lambda_motion=lambda_motion,
-            max_cosine_distance=max_cosine_distance,
+            lambda_motion=0.50,
+            max_cosine_distance=0.30,
+            use_mahalanobis=config.use_mahalanobis,
+            use_appearance=config.use_appearance,
+            use_low_confidence_recovery=config.use_low_confidence_recovery,
         )
     )
 
@@ -89,32 +133,46 @@ def run_sequence(
                 dtype=np.float32,
             )
 
-        cached_embeddings = embedding_cache.get(frame_idx)
+        confidences = cached_detections[:, 4]
+        high_mask = confidences >= config.high_confidence
 
-        if cached_embeddings is None:
-            cached_embeddings = np.empty(
-                (0, 512),
-                dtype=np.float32,
+        high_rows = cached_detections[high_mask]
+        high_detections = make_detections(high_rows)
+
+        high_embeddings = None
+
+        if config.use_appearance:
+            cached_embeddings = embedding_cache.get(frame_idx)
+
+            if cached_embeddings is None:
+                cached_embeddings = np.empty(
+                    (0, 512),
+                    dtype=np.float32,
+                )
+
+            if len(cached_detections) != len(cached_embeddings):
+                raise ValueError(
+                    f"{sequence_name} frame {frame_idx}: "
+                    "detection and embedding counts do not match"
+                )
+
+            high_embeddings = cached_embeddings[high_mask]
+
+        low_detections: list[Detection] = []
+
+        if config.use_low_confidence_recovery and config.low_confidence is not None:
+            low_mask = (confidences >= config.low_confidence) & (
+                confidences < config.high_confidence
             )
 
-        if len(cached_detections) != len(cached_embeddings):
-            raise ValueError(
-                f"{sequence_name} frame {frame_idx}: "
-                "detection and embedding counts do not match"
-            )
-
-        detections = [
-            Detection(
-                xyxy=row[:4].astype(float),
-                confidence=float(row[4]),
-            )
-            for row in cached_detections
-        ]
+            low_rows = cached_detections[low_mask]
+            low_detections = make_detections(low_rows)
 
         tracks = tracker.update(
-            detections=detections,
-            embeddings=cached_embeddings,
+            detections=high_detections,
+            embeddings=high_embeddings,
             frame_idx=frame_idx,
+            low_confidence_detections=low_detections,
         )
 
         for track in tracks:
@@ -135,7 +193,7 @@ def run_sequence(
                 ]
             )
 
-    output_path = output_root / tracker_name / "data" / f"{sequence_name}.txt"
+    output_path = output_root / config.name / "data" / f"{sequence_name}.txt"
 
     output_path.parent.mkdir(
         parents=True,
@@ -147,23 +205,37 @@ def run_sequence(
         rows,
     )
 
+    print(
+        f"{config.name} | "
+        f"{sequence_name}: "
+        f"{len(frame_range)} frames, "
+        f"{len(rows)} track rows"
+    )
 
-def run_tracker(
-    tracker_name: str,
-    lambda_motion: float,
-    max_cosine_distance: float,
+
+def run_config(
+    config: AblationConfig,
+    data_root: Path,
+    detection_cache_root: Path,
+    embedding_cache_root: Path,
+    output_root: Path,
 ) -> None:
-    data_root = Path("data/MOT17/train")
-    detection_cache_root = Path("cache/detections")
-    embedding_cache_root = Path("cache/embeddings")
-    output_root = Path("results/trackers/MOT17-val")
+    print()
+    print("=" * 80)
+    print(f"Running: {config.name}")
+    print(
+        f"Mahalanobis={config.use_mahalanobis}, "
+        f"appearance={config.use_appearance}, "
+        f"low_conf_recovery={config.use_low_confidence_recovery}, "
+        f"high_conf={config.high_confidence}, "
+        f"low_conf={config.low_confidence}"
+    )
+    print("=" * 80)
 
     for sequence_name in SEQUENCES:
         run_sequence(
             sequence_name=sequence_name,
-            tracker_name=tracker_name,
-            lambda_motion=lambda_motion,
-            max_cosine_distance=max_cosine_distance,
+            config=config,
             data_root=data_root,
             detection_cache_root=detection_cache_root,
             embedding_cache_root=embedding_cache_root,
@@ -171,148 +243,20 @@ def run_tracker(
         )
 
 
-def run_trackeval(
-    tracker_name: str,
-) -> None:
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.evaluate_ablation",
-        "--tracker",
-        tracker_name,
-    ]
-
-    subprocess.run(
-        command,
-        check=True,
-    )
-
-
-def read_summary(
-    tracker_name: str,
-) -> dict[str, str]:
-    summary_path = (
-        Path("results/trackers/MOT17-val") / tracker_name / "pedestrian_summary.txt"
-    )
-
-    if not summary_path.exists():
-        raise FileNotFoundError(summary_path)
-
-    with summary_path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-        lines = [line.strip() for line in file if line.strip()]
-
-    headers = lines[0].split()
-    values = lines[1].split()
-
-    return dict(
-        zip(
-            headers,
-            values,
-            strict=True,
-        )
-    )
-
-
 def main() -> None:
-    results: list[dict[str, float | str]] = []
+    data_root = Path("data/MOT17/train")
+    detection_cache_root = Path("cache/detections")
+    embedding_cache_root = Path("cache/embeddings")
+    output_root = Path("results/trackers/MOT17-val")
 
-    for lambda_motion in LAMBDA_VALUES:
-        for max_cosine_distance in COSINE_THRESHOLDS:
-            tracker_name = f"ablation_l{lambda_motion:.2f}_t{max_cosine_distance:.4f}"
-
-            tracker_name = tracker_name.replace(
-                ".",
-                "p",
-            )
-
-            print()
-            print(f"Running {tracker_name}")
-
-            run_tracker(
-                tracker_name=tracker_name,
-                lambda_motion=lambda_motion,
-                max_cosine_distance=max_cosine_distance,
-            )
-
-            run_trackeval(tracker_name)
-
-            summary = read_summary(tracker_name)
-
-            row = {
-                "tracker": tracker_name,
-                "lambda_motion": lambda_motion,
-                "max_cosine_distance": max_cosine_distance,
-                "HOTA": float(summary["HOTA"]),
-                "MOTA": float(summary["MOTA"]),
-                "IDF1": float(summary["IDF1"]),
-                "IDSW": float(summary["IDSW"]),
-                "Frag": float(summary["Frag"]),
-            }
-
-            results.append(row)
-
-            print(
-                f"HOTA={row['HOTA']:.3f} "
-                f"MOTA={row['MOTA']:.3f} "
-                f"IDF1={row['IDF1']:.3f} "
-                f"IDSW={int(row['IDSW'])} "
-                f"Frag={int(row['Frag'])}"
-            )
-
-    results.sort(
-        key=lambda row: (
-            -float(row["IDF1"]),
-            float(row["IDSW"]),
+    for config in CONFIGS:
+        run_config(
+            config=config,
+            data_root=data_root,
+            detection_cache_root=detection_cache_root,
+            embedding_cache_root=embedding_cache_root,
+            output_root=output_root,
         )
-    )
-
-    output_path = Path("outputs/p4-ablation-results.csv")
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "tracker",
-                "lambda_motion",
-                "max_cosine_distance",
-                "HOTA",
-                "MOTA",
-                "IDF1",
-                "IDSW",
-                "Frag",
-            ],
-        )
-
-        writer.writeheader()
-        writer.writerows(results)
-
-    print()
-    print("=== Ranked by IDF1 ===")
-
-    for row in results:
-        print(
-            f"{row['tracker']}: "
-            f"IDF1={float(row['IDF1']):.3f} "
-            f"IDSW={int(row['IDSW'])} "
-            f"HOTA={float(row['HOTA']):.3f} "
-            f"MOTA={float(row['MOTA']):.3f} "
-            f"Frag={int(row['Frag'])}"
-        )
-
-    print()
-    print(f"Saved: {output_path}")
 
 
 if __name__ == "__main__":

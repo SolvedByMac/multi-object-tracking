@@ -10,6 +10,7 @@ from src.tracking.association import (
     associate_fused_cascade,
     associate_iou,
 )
+from src.tracking.gated_association import associate_iou_gated
 from src.tracking.kalman import KalmanFilter
 from src.tracking.track import Track
 
@@ -21,6 +22,9 @@ class TrackerConfig:
     max_age: int = 30
     lambda_motion: float = 0.50
     max_cosine_distance: float = 0.30
+    use_mahalanobis: bool = False
+    use_appearance: bool | None = None
+    use_low_confidence_recovery: bool = True
 
 
 class Tracker:
@@ -39,11 +43,24 @@ class Tracker:
         detections: list[Detection],
         embeddings: np.ndarray | None = None,
         frame_idx: int | None = None,
+        low_confidence_detections: list[Detection] | None = None,
     ) -> list[Track]:
         del frame_idx
 
+        if low_confidence_detections is None:
+            low_confidence_detections = []
+
         if embeddings is not None and len(embeddings) != len(detections):
             raise ValueError("embeddings must align with detections")
+
+        use_appearance = (
+            embeddings is not None
+            if self.config.use_appearance is None
+            else self.config.use_appearance
+        )
+
+        if use_appearance and embeddings is None:
+            raise ValueError("embeddings are required when appearance is enabled")
 
         for track in self.tracks:
             track.predict(self.kf)
@@ -51,17 +68,7 @@ class Tracker:
         track_boxes = self._track_boxes()
         detection_boxes = self._detection_boxes(detections)
 
-        if embeddings is None:
-            (
-                matches,
-                unmatched_track_indices,
-                unmatched_detection_indices,
-            ) = associate_iou(
-                track_boxes,
-                detection_boxes,
-                min_iou=self.config.min_iou,
-            )
-        else:
+        if use_appearance:
             (
                 matches,
                 unmatched_track_indices,
@@ -70,6 +77,25 @@ class Tracker:
                 track_boxes=track_boxes,
                 detection_boxes=detection_boxes,
                 detection_embeddings=embeddings,
+            )
+        elif self.config.use_mahalanobis:
+            (
+                matches,
+                unmatched_track_indices,
+                unmatched_detection_indices,
+            ) = self._associate_with_mahalanobis(
+                track_boxes=track_boxes,
+                detection_boxes=detection_boxes,
+            )
+        else:
+            (
+                matches,
+                unmatched_track_indices,
+                unmatched_detection_indices,
+            ) = associate_iou(
+                track_boxes,
+                detection_boxes,
+                min_iou=self.config.min_iou,
             )
 
         for track_idx, detection_idx in matches:
@@ -80,17 +106,51 @@ class Tracker:
                 self.kf,
             )
 
-            if embeddings is not None:
+            if use_appearance:
                 self.gallery.update(
                     track.track_id,
                     embeddings[detection_idx],
                 )
 
+        recovered_track_indices: set[int] = set()
+
+        if self.config.use_low_confidence_recovery:
+            recovery_track_indices = [
+                track_idx
+                for track_idx in unmatched_track_indices
+                if (
+                    self.tracks[track_idx].is_confirmed()
+                    and self.tracks[track_idx].time_since_update == 1
+                )
+            ]
+
+            if recovery_track_indices and low_confidence_detections:
+                recovery_track_boxes = self._track_boxes()[recovery_track_indices]
+
+                low_confidence_boxes = self._detection_boxes(low_confidence_detections)
+
+                recovery_matches, _, _ = associate_iou(
+                    recovery_track_boxes,
+                    low_confidence_boxes,
+                    min_iou=self.config.min_iou,
+                )
+
+                for local_track_idx, low_detection_idx in recovery_matches:
+                    track_idx = recovery_track_indices[local_track_idx]
+
+                    self.tracks[track_idx].update(
+                        low_confidence_detections[low_detection_idx],
+                        self.kf,
+                    )
+
+                    recovered_track_indices.add(track_idx)
+
         for track_idx in unmatched_track_indices:
-            self.tracks[track_idx].mark_missed()
+            if track_idx not in recovered_track_indices:
+                self.tracks[track_idx].mark_missed()
 
         for detection_idx in unmatched_detection_indices:
-            embedding = embeddings[detection_idx] if embeddings is not None else None
+            embedding = embeddings[detection_idx] if use_appearance else None
 
             self._start_track(
                 detections[detection_idx],
@@ -111,6 +171,41 @@ class Tracker:
             for track in self.tracks
             if (track.is_confirmed() and track.time_since_update == 0)
         ]
+
+    def _associate_with_mahalanobis(
+        self,
+        track_boxes: np.ndarray,
+        detection_boxes: np.ndarray,
+    ) -> tuple[
+        list[tuple[int, int]],
+        list[int],
+        list[int],
+    ]:
+        if not self.tracks:
+            return (
+                [],
+                [],
+                list(range(len(detection_boxes))),
+            )
+
+        track_means = np.asarray(
+            [track.state for track in self.tracks],
+            dtype=float,
+        )
+
+        track_covariances = np.asarray(
+            [track.covariance for track in self.tracks],
+            dtype=float,
+        )
+
+        return associate_iou_gated(
+            track_boxes=track_boxes,
+            track_means=track_means,
+            track_covariances=track_covariances,
+            detection_boxes=detection_boxes,
+            kf=self.kf,
+            min_iou=self.config.min_iou,
+        )
 
     def _associate_with_appearance(
         self,
@@ -152,7 +247,6 @@ class Tracker:
                 continue
 
             confirmed_indices.append(track_idx)
-
             confirmed_embeddings.append(embedding)
 
         matches: list[tuple[int, int]] = []
@@ -197,7 +291,7 @@ class Tracker:
                 kf=self.kf,
                 max_age=self.config.max_age,
                 lambda_motion=self.config.lambda_motion,
-                max_cosine_distance=(self.config.max_cosine_distance),
+                max_cosine_distance=self.config.max_cosine_distance,
             )
 
             for local_track_idx, detection_idx in appearance_matches:
@@ -211,7 +305,6 @@ class Tracker:
                 )
 
                 matched_tracks.add(track_idx)
-
                 matched_detections.add(detection_idx)
 
         fallback_track_indices = [
@@ -244,10 +337,7 @@ class Tracker:
                 min_iou=self.config.min_iou,
             )
 
-            for (
-                local_track_idx,
-                local_detection_idx,
-            ) in fallback_matches:
+            for local_track_idx, local_detection_idx in fallback_matches:
                 track_idx = fallback_track_indices[local_track_idx]
 
                 detection_idx = remaining_detection_indices[local_detection_idx]
@@ -260,7 +350,6 @@ class Tracker:
                 )
 
                 matched_tracks.add(track_idx)
-
                 matched_detections.add(detection_idx)
 
         unmatched_track_indices = [
