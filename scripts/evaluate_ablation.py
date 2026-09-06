@@ -31,7 +31,7 @@ def main() -> None:
             "PRINT_ONLY_COMBINED": True,
             "PRINT_CONFIG": False,
             "OUTPUT_SUMMARY": True,
-            "OUTPUT_DETAILED": False,
+            "OUTPUT_DETAILED": True,
             "PLOT_CURVES": False,
         }
     )
