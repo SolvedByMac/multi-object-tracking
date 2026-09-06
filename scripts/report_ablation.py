@@ -113,7 +113,6 @@ def load_experiment(
     dict[str, dict[str, float | int]],
 ]:
     path = tracker_root / config.tracker / "pedestrian_detailed.csv"
-
     rows = load_detailed_results(path)
 
     combined: dict[str, float | int] | None = None
@@ -268,7 +267,7 @@ def write_markdown(
     )
 
 
-def append_jsonl(
+def write_jsonl(
     path: Path,
     results: list[
         tuple[
@@ -286,7 +285,7 @@ def append_jsonl(
     timestamp = datetime.now(UTC).isoformat()
 
     with path.open(
-        "a",
+        "w",
         encoding="utf-8",
     ) as file:
         for config, aggregate, sequences in results:
@@ -361,7 +360,6 @@ def print_table(
 
 def main() -> None:
     tracker_root = Path("results/trackers/MOT17-val")
-
     output_root = Path("outputs")
 
     aggregate_results: list[
@@ -429,7 +427,7 @@ def main() -> None:
         aggregate_results,
     )
 
-    append_jsonl(
+    write_jsonl(
         output_root / "p5-ablation-runs.jsonl",
         log_results,
     )
@@ -440,7 +438,7 @@ def main() -> None:
     print("Saved outputs/p5-ablation-results.csv")
     print("Saved outputs/p5-ablation-per-sequence.csv")
     print("Saved outputs/p5-ablation-results.md")
-    print("Appended outputs/p5-ablation-runs.jsonl")
+    print("Saved outputs/p5-ablation-runs.jsonl")
 
 
 if __name__ == "__main__":
