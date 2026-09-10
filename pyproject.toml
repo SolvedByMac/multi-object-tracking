@@ -7,7 +7,14 @@ authors = [
     { name = "SolvedByMac", email = "emeshieobim@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.0.0",
+    "opencv-python>=4.10.0",
+    "scipy>=1.14.0",
+    "torch>=2.5.0",
+    "torchreid>=0.2.5",
+    "ultralytics>=8.3.0",
+]
 
 [project.scripts]
 multi-object-tracking = "multi_object_tracking:main"
